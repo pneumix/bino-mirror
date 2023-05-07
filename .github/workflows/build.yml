@@ -1,0 +1,118 @@
+name: build
+
+on:
+  push:
+    branches: ["*"]
+    pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-11
+    name: macOS
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew update
+          brew install cmake ninja git mpv freetype2 pkg-config
+      - name: Build ImPlay
+        env:
+          PKG_CONFIG_PATH: /usr/local/opt/libarchive/lib/pkgconfig
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=RELEASE -DUSE_PATCHED_GLFW=ON -DCREATE_PACKAGE=ON -G Ninja ..
+          cmake --build . --target package
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ImPlay-macOS
+          path: build/ImPlay-*.dmg
+  win:
+    runs-on: windows-2019
+    name: Windows
+    steps:
+      - name: Prepare git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          install: >-
+            base-devel
+            git
+            p7zip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-freetype
+          update: true
+      - name: Build ImPlay
+        shell: msys2 {0}
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=RELEASE -DUSE_PATCHED_GLFW=ON -DUSE_OPENGL_ES3=ON -DCREATE_PACKAGE=ON -G Ninja ..
+          cmake --build . --target package
+      - uses: actions/upload-artifact@v3
+        with:
+          name: qwin64
+          path: |
+            build/ImPlay-*.msi
+            build/ImPlay-*.zip
+  publish:
+    needs: [macos, win]
+    runs-on: windows-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+      - run: |
+          for f in ImPlay-*/*; do
+            mv "$f" "${f/ImPlay-*-/ImPlay-dev-}"
+          done
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: continuous
+          force_push_tag: true
+      - uses: ncipollo/release-action@v1
+        with:
+          commit: ${{ github.sha }}
+          tag: continuous
+          artifacts: "ImPlay-dev-*"
+          allowUpdates: true
+          prerelease: true
+          name: Continuous build
+          body: |
+            > WARNING: This is the DEV version, may contains bugs or unfinished features, [Stable version](https://github.com/tsl0922/ImPlay/releases/latest). 
+            # Install
+            ## Windows
+            - MSI
+              - Download the msi executable
+              - Run the MSI installer
+              - Run ImPlay from Start Menu
+            - Zip
+              - Download the windows zip
+              - Extract the zip
+              - Run `ImPlay.exe`
+            ## macOS
+            - Download the dmg file
+            - Double click the dmg to show it's contents
+            - Drag ImPlay to `Applications` folder
+            - Run ImPlay from Launchpad
+            ## Linux
+            - Debian Package
+              - Download the deb file
+              - Install: `sudo apt install ./ImPlay-*.deb`
+              - Run `ImPlay`
+            - AppImage
+              - Download the AppImage file
+              - Run `chmod u+x ImPlay-*.AppImage && ./ImPlay-*.AppImage`
